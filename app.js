@@ -475,11 +475,12 @@
 
   // ---------- v3: Körper, Momente, Einkauf ----------
   const LVL=["","leicht","mittel","stark"];
-  const BODY_BASE=[{k:"kopf",l:"Kopfschmerzen",ic:"head",sev:true},{k:"migraene",l:"Migräne",ic:"bolt",sev:true},{k:"kreislauf",l:"Kreislauf / Schwindel",ic:"wave",sev:true},{k:"therapie",l:"Therapie",ic:"chat",sev:false},{k:"meds",l:"Schmerzmittel",ic:"pill",sev:false}];
+  const BODY_BASE=[{k:"kopf",l:"Kopfschmerzen",ic:"head",sev:true},{k:"migraene",l:"Migräne",ic:"bolt",sev:true},{k:"therapie",l:"Therapie",ic:"chat",sev:false},{k:"meds",l:"Schmerzmittel",ic:"pill",sev:false}];
   const ADD_TILE={k:"_add",l:"Eigene",type:"addbody",ic:"plus",c:"--a-body"};
   let settings={symptoms:[]},shop=[],shopHist={};
   function bodyTiles(){return BODY_BASE.map(b=>Object.assign({type:"body",c:"--a-body"},b)).concat((settings.symptoms||[]).map(s=>({k:s.k,l:s.l,ic:"dot",type:"body",sev:true,custom:true,c:"--a-body"})));}
-  const bodyLabel=x=>(bodyTiles().find(b=>b.k===x.k)||{}).l||x.l||x.k;
+  const LEGACY_BODY={kreislauf:"Kreislauf / Schwindel"};
+  const bodyLabel=x=>(bodyTiles().find(b=>b.k===x.k)||{}).l||x.l||LEGACY_BODY[x.k]||x.k;
   const isSym=x=>x.k!=="meds"&&x.k!=="therapie";
   const addDays=(s,n)=>{const x=new Date(s+"T12:00");x.setDate(x.getDate()+n);return ymd(x);};
   const fmtFull=s=>s.slice(8,10)+"."+s.slice(5,7)+"."+s.slice(0,4);
@@ -526,7 +527,7 @@
     box.append(h("div",{class:"small",text:logged.length?(free+" von "+logged.length+" eingetragenen Tagen ohne Beschwerden."):"Diese Woche ist noch nichts eingetragen."}));
     const rows=h("div",{});el.forEach(d=>{const b=bodyOf(d);if(b.length)rows.append(h("div",{class:"brow"},[h("b",{style:"font-weight:500",text:wd(d)+" "+fmt(d)+"  "}),b.map(x=>bodyLabel(x)+(x.lvl?" ("+LVL[x.lvl]+")":"")).join(", ")]));});if(rows.childNodes.length)box.append(rows);
     const last=[];for(let i=29;i>=0;i--)last.push(addDays(TODAY,-i));const c=k=>last.filter(d=>bodyOf(d).some(x=>x.k===k)).length;
-    const stats=[[c("kopf"),"Kopfschmerz-Tage"],[c("migraene"),"Migräne-Tage"],[c("kreislauf"),"Kreislauf-Tage"],[c("meds"),"Tage mit Schmerzmitteln"],[c("therapie"),"Therapie-Termine"]].concat((settings.symptoms||[]).map(s=>[c(s.k),s.l+" (Tage)"]));
+    const stats=[[c("kopf"),"Kopfschmerz-Tage"],[c("migraene"),"Migräne-Tage"],[c("meds"),"Tage mit Schmerzmitteln"],[c("therapie"),"Therapie-Termine"]].concat((settings.symptoms||[]).map(s=>[c(s.k),s.l+" (Tage)"]));
     box.append(h("div",{class:"tgroup",style:"margin:6px 0 0",text:"Letzte 30 Tage"}));const g=h("div",{class:"bstats"});stats.forEach(([n,l])=>g.append(h("div",{class:"bs"},[h("b",{text:String(n)}),h("span",{text:l})])));box.append(g);
     if(c("meds")>=10)box.append(h("div",{class:"hint",text:"An "+c("meds")+" der letzten 30 Tage Schmerzmittel. Ab etwa 10 Tagen im Monat lohnt es sich, das mit deiner Ärztin zu besprechen."}));
     const sh=h("button",{class:"gbtn primary",type:"button",text:"Für Ärztin oder Therapie teilen"});sh.addEventListener("click",()=>shareText(bodyReport(),"Körper-Tagebuch"));box.append(h("div",{class:"gact"},[sh]));
