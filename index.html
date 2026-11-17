@@ -1,6 +1,20 @@
-<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style>
+<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}
+.sgroups{gap:6px}.sgroups .fchip{padding:5px 11px}
+.shead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:14px 2px 6px}
+.shead:first-child{margin-top:0}
+.gacts{display:flex;gap:6px;flex:none}.gacts .gbtn{padding:5px 11px;text-decoration:none;display:inline-block}
+.sq{color:var(--muted)}.sg{color:var(--muted);font-size:12px}
+.rbox{background:var(--panel);border:1px solid var(--line-2);border-radius:var(--r-md);padding:16px}
+.rstatus{margin-top:10px;color:var(--muted)}.rstatus.err{color:var(--gold-deep)}
+.ritems{display:flex;flex-direction:column;gap:6px}
+.rrow{display:flex;align-items:center;gap:10px}
+.rrow input[type=checkbox]{width:22px;height:22px;flex:none;accent-color:var(--gold)}
+.rrow input[type=text]{padding:9px 12px;font-size:14px;border-radius:12px}
+.rrow.off input[type=text]{opacity:.5;text-decoration:line-through}
+input[type=url]{font:15px var(--f);color:var(--ink);background:var(--panel-2);border:1px solid var(--line-2);border-radius:14px;padding:12px 14px;width:100%}
+</style>
 <title>Melina Dashboard</title>
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://r.jina.ai https://cdn.jsdelivr.net; manifest-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
 <link rel="apple-touch-icon" href="icon-180.png">
@@ -608,6 +622,35 @@ input,select,textarea{font-size:16px!important}
       <div class="tcap shopadd">
         <input type="text" id="sText" maxlength="300" placeholder="Was fehlt? Auch: Milch, Eier" aria-label="Was fehlt?" enterkeyhint="done" autocomplete="off" autocapitalize="sentences">
         <button class="btn gold" id="sAdd" type="button">Dazu</button>
+      </div>
+      <div class="chips sgroups" id="sGroups"></div>
+      <div><button class="gbtn primary" type="button" id="rToggle" aria-expanded="false" aria-controls="rBox">Rezept einfügen</button></div>
+      <div class="rbox" id="rBox" hidden>
+        <div id="rInput">
+          <div class="small muted" style="margin-bottom:8px">Link zum Rezept, Screenshot der Zutaten oder die Zutaten als Text. Daraus wird eine eigene Gruppe auf der Liste.</div>
+          <div class="tcap shopadd">
+            <input type="url" id="rUrl" placeholder="https://… Link zum Rezept" aria-label="Link zum Rezept" enterkeyhint="go" autocomplete="off" autocapitalize="off" inputmode="url">
+            <button class="btn gold" id="rLoad" type="button">Laden</button>
+          </div>
+          <div class="chips" style="margin-top:10px">
+            <button class="fchip" type="button" id="rPaste">Aus Zwischenablage</button>
+            <label class="fchip" for="rFile" style="cursor:pointer">Screenshot wählen</label>
+            <input type="file" id="rFile" accept="image/*" hidden>
+          </div>
+          <textarea id="rTxt" style="margin-top:10px" placeholder="Oder Zutaten hier einfügen, eine pro Zeile" aria-label="Zutaten als Text"></textarea>
+          <div class="gact" style="margin-top:8px"><button class="gbtn" type="button" id="rTxtGo">Text übernehmen</button><button class="gbtn" type="button" id="rCancel">Schließen</button></div>
+        </div>
+        <div class="small rstatus" id="rStatus" role="status" aria-live="polite" hidden></div>
+        <div id="rPrev" hidden>
+          <input type="text" id="rName" maxlength="60" placeholder="Name des Rezepts" aria-label="Name des Rezepts">
+          <div class="small muted" style="margin:8px 2px">Haken weg bei allem, was du schon da hast. Text kannst du direkt ändern.</div>
+          <div id="rItems" class="ritems"></div>
+          <div class="gact" style="margin-top:10px;flex-wrap:wrap">
+            <button class="gbtn" type="button" id="rMore">+ Zutat</button>
+            <button class="gbtn" type="button" id="rBack">Zurück</button>
+            <button class="gbtn primary" type="button" id="rSave">Auf die Liste</button>
+          </div>
+        </div>
       </div>
       <div id="sSuggest"></div>
       <div class="shoplist" id="sOpen"></div>

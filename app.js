@@ -534,35 +534,165 @@
     box.append(h("div",{class:"small muted",text:"Das Tagebuch stellt keine Diagnose. Es hilft dir, Muster zu sehen und beim Termin genauer zu erzählen."}));
   }
   // Einkauf
+  // Datenmodell je Eintrag in "shop": {t: Name, done, at, doneAt?, q?: Menge, g?: Gruppe, u?: Rezept-Link}. Ohne g = "Allgemein".
   const sKey=x=>x.trim().toLowerCase().replace(/\s+/g," ");
-  async function shopAdd(raw){
-    const parts=String(raw||"").split(/[,;\n]+/).map(x=>x.trim()).filter(Boolean).slice(0,30);if(!parts.length||!needDb())return false;
-    const open=new Set(shop.filter(i=>!i.done).map(i=>sKey(i.t))),added=[];
-    try{for(const p of parts){const k=sKey(p);if(open.has(k))continue;open.add(k);const old=shop.find(i=>i.done&&sKey(i.t)===k);
-      if(old){await db.collection("shop").doc(old._id).update({done:false,doneAt:null,at:new Date().toISOString()});added.push({id:old._id,reopen:true,t:old.t});}
-      else{const ref=await db.collection("shop").add({t:p.slice(0,80),done:false,at:new Date().toISOString()});added.push({id:ref.id,t:p});}}}
+  const GEN="Allgemein",BASE_GROUPS=[GEN,"Drogerie","Haushalt"];
+  const gOf=i=>(i.g&&String(i.g).trim())||GEN;
+  const iKey=(g,t)=>sKey(g)+"|"+sKey(t);
+  let sGroup=GEN,sExtraGroups=[];
+  const itemLabel=i=>(i.q?i.q+" ":"")+i.t;
+  async function shopAddItems(list,group,url,countHist){
+    // list: [{t,q?}] , legt fehlende Einträge in einer Gruppe an
+    if(!list.length||!needDb())return false;
+    const g=group&&group!==GEN?String(group).trim().slice(0,60):null;
+    const open=new Set(shop.filter(i=>!i.done).map(i=>iKey(gOf(i),i.t))),added=[];
+    try{for(const it of list){const t=String(it.t||"").trim().slice(0,80);if(!t)continue;const k=iKey(g||GEN,t);if(open.has(k))continue;open.add(k);
+      const old=shop.find(i=>i.done&&iKey(gOf(i),i.t)===k);const q=it.q?String(it.q).trim().slice(0,30):"";
+      if(old){const upd={done:false,doneAt:null,at:new Date().toISOString()};if(q)upd.q=q;await db.collection("shop").doc(old._id).update(upd);added.push({id:old._id,reopen:true,t:old.t});}
+      else{const doc={t,done:false,at:new Date().toISOString()};if(q)doc.q=q;if(g)doc.g=g;if(g&&url)doc.u=url;const ref=await db.collection("shop").add(doc);added.push({id:ref.id,t});}}}
     catch(_){toast("Nicht gespeichert.",false);return false;}
     if(!added.length){toast("Steht schon drauf.",false);return true;}
-    const hist=Object.assign({},shopHist);added.forEach(a=>{const k=sKey(a.t),o=hist[k]||{t:a.t,n:0};hist[k]={t:o.t,n:o.n+1,last:TODAY};});try{await db.doc("meta/shop").set({items:hist});}catch(_){}
+    if(countHist){const hist=Object.assign({},shopHist);added.forEach(a=>{const k=sKey(a.t),o=hist[k]||{t:a.t,n:0};hist[k]={t:o.t,n:o.n+1,last:TODAY};});try{await db.doc("meta/shop").set({items:hist});}catch(_){}}
     pushUndo(added.length===1?"Dazu: "+added[0].t:added.length+" Sachen dazu",async()=>{for(const a of added){if(a.reopen)await db.collection("shop").doc(a.id).update({done:true});else await db.collection("shop").doc(a.id).delete();}});return true;
   }
+  function shopAdd(raw){
+    const parts=String(raw||"").split(/[,;\n]+/).map(x=>x.trim()).filter(Boolean).slice(0,30);
+    return shopAddItems(parts.map(t=>({t})),sGroup,null,true);
+  }
   async function shopToggle(i){if(!needDb())return;try{await db.collection("shop").doc(i._id).update({done:!i.done,doneAt:i.done?null:new Date().toISOString()});}catch(_){toast("Nicht gespeichert.",false);}}
-  async function shopClearDone(){const done=shop.filter(i=>i.done);if(!done.length||!needDb())return;const saved=done.map(i=>{const x=Object.assign({},i);delete x._id;return [i._id,x];});
-    try{for(const i of done)await db.collection("shop").doc(i._id).delete();pushUndo(done.length+" erledigte gelöscht",async()=>{for(const [id,x] of saved)await db.collection("shop").doc(id).set(x);});}catch(_){toast("Löschen ging nicht.",false);}}
-  function shopRow(i){const b=h("button",{class:"sitem"+(i.done?" done":""),type:"button","aria-pressed":String(!!i.done)},[h("span",{class:"bx",text:i.done?"✓":""}),h("span",{style:"flex:1;min-width:0;overflow-wrap:anywhere",text:i.t})]);b.addEventListener("click",()=>shopToggle(i));
-    if(i.done)return b;const x=h("button",{class:"x",type:"button","aria-label":"Löschen: "+i.t,text:"✕"});x.addEventListener("click",async()=>{const dd=Object.assign({},i);delete dd._id;try{await db.collection("shop").doc(i._id).delete();pushUndo("Gelöscht: "+i.t,()=>db.collection("shop").doc(i._id).set(dd));}catch(_){}});return h("div",{class:"srow"},[b,x]);}
+  async function shopRemove(items,label){if(!items.length||!needDb())return;const saved=items.map(i=>{const x=Object.assign({},i);delete x._id;return [i._id,x];});
+    try{for(const i of items)await db.collection("shop").doc(i._id).delete();pushUndo(label,async()=>{for(const [id,x] of saved)await db.collection("shop").doc(id).set(x);});}catch(_){toast("Löschen ging nicht.",false);}}
+  function shopClearDone(){const done=shop.filter(i=>i.done);shopRemove(done,done.length+" erledigte gelöscht");}
+  function shopRow(i,showGroup){const kids=[h("span",{class:"bx",text:i.done?"✓":""}),h("span",{style:"flex:1;min-width:0;overflow-wrap:anywhere"},[i.q?h("span",{class:"sq",text:i.q+" "}):null,i.t,showGroup&&i.g?h("span",{class:"sg",text:" · "+i.g}):null])];
+    const b=h("button",{class:"sitem"+(i.done?" done":""),type:"button","aria-pressed":String(!!i.done)},kids);b.addEventListener("click",()=>shopToggle(i));
+    if(i.done)return b;const x=h("button",{class:"x",type:"button","aria-label":"Löschen: "+i.t,text:"✕"});x.addEventListener("click",()=>shopRemove([i],"Gelöscht: "+i.t));return h("div",{class:"srow"},[b,x]);}
+  function groupText(name,items){const u=items.find(i=>i.u);return name+"\n"+items.map(i=>"• "+itemLabel(i)).join("\n")+(u?"\nRezept: "+u.u:"");}
+  function openGroups(){const open=shop.filter(i=>!i.done).sort((a,b)=>a.at<b.at?-1:1),m=new Map();
+    open.forEach(i=>{const g=gOf(i);if(!m.has(g))m.set(g,[]);m.get(g).push(i);});
+    const names=[...m.keys()].sort((a,b)=>a===GEN?-1:b===GEN?1:(m.get(a)[0].at<m.get(b)[0].at?-1:1));return {open,m,names};}
+  function renderGroupPick(names){
+    const all=[...new Set(BASE_GROUPS.concat(names,sExtraGroups))];if(!all.includes(sGroup))sGroup=GEN;
+    const c=$("sGroups");c.innerHTML="";c.append(h("span",{class:"small muted",style:"align-self:center",text:"Für:"}));
+    all.forEach(g=>{const b=h("button",{class:"fchip",type:"button","aria-pressed":String(g===sGroup),text:g});b.addEventListener("click",()=>{sGroup=g;renderEinkauf();});c.append(b);});
+    const add=h("button",{class:"fchip",type:"button",text:"+ Gruppe"});add.addEventListener("click",()=>{if(add.dataset.on)return;add.dataset.on="1";
+      const inp=h("input",{type:"text",maxlength:"40",placeholder:"Name, z. B. Grillabend","aria-label":"Neue Gruppe",style:"width:auto;flex:1;min-width:140px;padding:6px 12px;border-radius:999px;font-size:13px"});
+      const ok=()=>{const v=inp.value.trim();if(v){if(!sExtraGroups.includes(v))sExtraGroups.push(v);sGroup=v;}renderEinkauf();$("sText").focus();};
+      inp.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();ok();}if(e.key==="Escape")renderEinkauf();});inp.addEventListener("blur",ok);add.replaceWith(inp);inp.focus();});c.append(add);
+  }
   function renderEinkauf(){
-    const open=shop.filter(i=>!i.done).sort((a,b)=>a.at<b.at?-1:1),done=shop.filter(i=>i.done).sort((a,b)=>(a.doneAt||"")<(b.doneAt||"")?1:-1);
-    const lo=$("sOpen");lo.innerHTML="";if(!open.length)lo.append(h("div",{class:"empty",text:done.length?"Alles im Wagen.":"Die Liste ist leer. Schreib oben, was fehlt."}));open.forEach(i=>lo.append(shopRow(i)));
+    const {open,m,names}=openGroups(),done=shop.filter(i=>i.done).sort((a,b)=>(a.doneAt||"")<(b.doneAt||"")?1:-1);
+    renderGroupPick(names);
+    const lo=$("sOpen");lo.innerHTML="";if(!open.length)lo.append(h("div",{class:"empty",text:done.length?"Alles im Wagen.":"Die Liste ist leer. Schreib oben, was fehlt, oder füg ein Rezept ein."}));
+    const many=names.length>1||(names.length===1&&names[0]!==GEN);
+    names.forEach(g=>{const items=m.get(g);
+      if(many){const u=(items.find(i=>i.u)||{}).u,acts=h("span",{class:"gacts"});
+        if(u&&/^https?:\/\//i.test(u))acts.append(h("a",{class:"gbtn",href:u,target:"_blank",rel:"noopener noreferrer",text:"Rezept"}));
+        const sh=h("button",{class:"gbtn",type:"button",text:"Teilen"});sh.addEventListener("click",()=>shareText(groupText(g,items),g));acts.append(sh);
+        if(g!==GEN){const rm=h("button",{class:"gbtn",type:"button","aria-label":"Gruppe "+g+" löschen",text:"✕"});rm.addEventListener("click",()=>shopRemove(items,"Gruppe gelöscht: "+g));acts.append(rm);}
+        lo.append(h("div",{class:"shead"},[h("div",{class:"tgroup",style:"margin:0;min-width:0;overflow-wrap:anywhere",text:g+" ("+items.length+")"}),acts]));}
+      items.forEach(i=>lo.append(shopRow(i,false)));});
     const openK=new Set(open.map(i=>sKey(i.t))),sug=Object.keys(shopHist).filter(k=>!openK.has(k)).sort((a,b)=>(shopHist[b].n-shopHist[a].n)||((shopHist[b].last||"")>(shopHist[a].last||"")?1:-1)).slice(0,10);
     const sg=$("sSuggest");sg.innerHTML="";if(sug.length){sg.append(h("div",{class:"tgroup",style:"margin:0 2px 8px",text:"Schnell dazu"}));const c=h("div",{class:"chips"});sug.forEach(k=>{const b=h("button",{class:"fchip",type:"button",text:"+ "+shopHist[k].t});b.addEventListener("click",()=>shopAdd(shopHist[k].t));c.append(b);});sg.append(c);}
-    const bx=$("sDoneBox");bx.innerHTML="";if(done.length){const clr=h("button",{class:"gbtn",type:"button",text:"Erledigte löschen"});clr.addEventListener("click",shopClearDone);bx.append(h("div",{class:"lg-head",style:"margin:10px 0 8px"},[h("div",{class:"tgroup",style:"margin:0",text:"Im Wagen ("+done.length+")"}),clr]));const l=h("div",{class:"shoplist"});done.slice(0,40).forEach(i=>l.append(shopRow(i)));bx.append(l);}
+    const bx=$("sDoneBox");bx.innerHTML="";if(done.length){const clr=h("button",{class:"gbtn",type:"button",text:"Erledigte löschen"});clr.addEventListener("click",shopClearDone);bx.append(h("div",{class:"lg-head",style:"margin:10px 0 8px"},[h("div",{class:"tgroup",style:"margin:0",text:"Im Wagen ("+done.length+")"}),clr]));const l=h("div",{class:"shoplist"});done.slice(0,40).forEach(i=>l.append(shopRow(i,true)));bx.append(l);}
     $("tab-einkauf").textContent=open.length?"Einkauf ("+open.length+")":"Einkauf";
   }
   async function shopSubmit(){const inp=$("sText");if(await shopAdd(inp.value))inp.value="";inp.focus();}
   $("sAdd").addEventListener("click",shopSubmit);
   $("sText").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();shopSubmit();}});
-  $("sShare").addEventListener("click",()=>{const open=shop.filter(i=>!i.done);if(!open.length){toast("Die Liste ist leer.",false);return;}shareText("Einkaufsliste\n"+open.map(i=>"• "+i.t).join("\n"),"Einkaufsliste");});
+  $("sShare").addEventListener("click",()=>{const {open,m,names}=openGroups();if(!open.length){toast("Die Liste ist leer.",false);return;}
+    const txt=names.length===1&&names[0]===GEN?"Einkaufsliste\n"+open.map(i=>"• "+itemLabel(i)).join("\n"):"Einkaufsliste\n\n"+names.map(g=>groupText(g,m.get(g))).join("\n\n");shareText(txt,"Einkaufsliste");});
+
+  // Rezept-Import: Link (über r.jina.ai, weil die App keinen Server hat), Screenshot (Texterkennung auf dem Gerät) oder eingefügter Text
+  const UNITS="kg|g|gr|mg|ml|cl|dl|l|liter|el|tl|msp|prise[n]?|bund|bd|dose[n]?|pck|pkg|packung(?:en)?|päckchen|becher|glas|gläser|tasse[n]?|stück|stk|scheibe[n]?|zehe[n]?|handvoll|zweig[e]?|blatt|blätter|knolle[n]?|kopf|köpfe|stange[n]?|stiel[e]?|würfel|tüte[n]?|beutel|flasche[n]?|schuss|spritzer|cup[s]?|tbsp|tsp|oz|lb";
+  const AMT_RE=new RegExp("^((?:ca\\.?\\s*|etwa\\s*)?[\\d½¼¾⅓⅔⅛][\\d½¼¾⅓⅔⅛.,/\\s–-]*)\\s*(?:("+UNITS+")\\.?(?=\\s|$))?\\s*(.*)$","i");
+  const PANTRY=/^(salz|pfeffer|salz und pfeffer|salz & pfeffer|wasser|öl|olivenöl|rapsöl|sonnenblumenöl|pflanzenöl|neutrales öl|zucker)\b/i;
+  const STOP_HEAD=/^(zubereitung|anleitung|so geht'?s|so wird'?s gemacht|instructions|method|schritt|nährwerte|notizen|tipps?|kommentare)\b/i;
+  function decodeEnt(s){const ta=document.createElement("textarea");ta.innerHTML=String(s);return ta.value;}
+  function cleanLine(s){return decodeEnt(String(s||"")).replace(/!\[[^\]]*\]\([^)]*\)/g,"").replace(/\[([^\]]*)\]\([^)]*\)/g,"$1").replace(/<[^>]+>/g," ")
+    .replace(/^\s*(?:[*+•·▢☐□◻○●-]|\d+\.(?=\s)|\[[ xX]?\])\s*/,"").replace(/^\s*(?:▢|☐|□)\s*/,"").replace(/[*_`#]+/g,"").replace(/\s+/g," ").trim();}
+  function splitAmt(line){const m=line.match(AMT_RE);if(!m||!m[3])return {q:"",t:line};let q=m[1].trim().replace(/\s*[–-]\s*/g,"–");if(m[2])q+=" "+m[2];return {q:q.trim(),t:m[3].replace(/^(?:x\s+)/i,"").trim()||line};}
+  function looksIngredient(s){return s.length>1&&s.length<=70&&/[a-zäöüß]/i.test(s)&&!/[.!?]$/.test(s.replace(/\b(ca|bzw|evtl|ggf|z\.b|stk|pck|el|tl)\.$/i,""))&&!/^(zutaten|für (das|den|die)\b.*:?$|portionen?\b)/i.test(s);}
+  function toItems(lines){const out=[],seen=new Set();lines.forEach(l=>{const c=cleanLine(l);if(!looksIngredient(c))return;const it=splitAmt(c);const k=sKey(it.q+" "+it.t);if(seen.has(k))return;seen.add(k);it.on=!PANTRY.test(it.t);out.push(it);});return out.slice(0,60);}
+  function fromText(txt){
+    const lines=String(txt||"").split(/\r?\n/);let best=null;
+    lines.forEach((l,idx)=>{if(!/^\W*(?:#+\s*)?\**\s*zutaten\b/i.test(l.trim()))return;const got=[];
+      for(let j=idx+1;j<lines.length&&j<idx+90;j++){const raw=lines[j].trim();if(!raw)continue;const c=cleanLine(raw);if(STOP_HEAD.test(c)&&(/^#|^\*\*/.test(raw)||c.length<40))break;
+        const isList=/^\s*(?:[*+•·▢☐□-]|\d+\.\s|\[[ xX]?\])/.test(raw);if(/^#/.test(raw)||(!isList&&/:$/.test(c)))continue;got.push(raw);}
+      const its=toItems(got);if(its.length>=2&&(!best||its.length>best.length))best=its;});
+    if(best)return best;
+    const amt=lines.filter(l=>AMT_RE.test(cleanLine(l)));const its=toItems(amt.length>=2?amt:lines);return its;
+  }
+  function fromLdJson(html){
+    const blocks=[...String(html).matchAll(/<script[^>]*application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)].map(m=>m[1]);
+    const walk=o=>{if(!o||typeof o!=="object")return null;if(Array.isArray(o)){for(const x of o){const r=walk(x);if(r)return r;}return null;}
+      if([].concat(o["@type"]).some(t=>String(t).toLowerCase()==="recipe")&&Array.isArray(o.recipeIngredient))return o;return walk(o["@graph"]);};
+    for(const b of blocks){try{const r=walk(JSON.parse(b.trim()));if(r){const its=toItems(r.recipeIngredient);if(its.length)return {name:cleanLine(r.name||""),items:its};}}catch(_){}}
+    return null;
+  }
+  async function fetchWithTimeout(url,opts,ms){const c=new AbortController(),t=setTimeout(()=>c.abort(),ms);try{const r=await fetch(url,Object.assign({signal:c.signal,referrerPolicy:"no-referrer",credentials:"omit"},opts||{}));if(!r.ok)throw new Error("http "+r.status);return await r.text();}finally{clearTimeout(t);}}
+  async function importFromUrl(url){
+    const proxy="https://r.jina.ai/"+url;
+    try{const html=await fetchWithTimeout(proxy,{headers:{"X-Return-Format":"html"}},15000);const r=fromLdJson(html);if(r)return r;}catch(_){}
+    const md=await fetchWithTimeout(proxy,null,20000);const tm=md.match(/^Title:\s*(.+)$/m);
+    const body=md.split(/^Markdown Content:\s*$/m).pop();return {name:tm?cleanLine(tm[1]).replace(/\s+[|–-]\s+[^|–-]*$/,""):"",items:fromText(body)};
+  }
+  let tessLoad=null;
+  function loadTesseract(){if(window.Tesseract)return Promise.resolve();if(tessLoad)return tessLoad;
+    tessLoad=new Promise((res,rej)=>{const s=document.createElement("script");s.src="https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js";
+      s.integrity="sha384-2BQ3U3OdKOb0Uczxqr41I9UvZkzr4V9Hv8uSzMMZAlmhsFClvdZX5wi5fDCzG+tM";s.crossOrigin="anonymous";s.onload=()=>res();s.onerror=()=>{tessLoad=null;rej(new Error("load"));};document.head.append(s);});return tessLoad;}
+  async function ocrImage(file,onProg){
+    await loadTesseract();
+    const w=await window.Tesseract.createWorker("deu",1,{workerPath:"https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/worker.min.js",
+      logger:m=>{if(m&&m.status==="recognizing text"&&typeof m.progress==="number")onProg(Math.round(m.progress*100));}});
+    try{const r=await w.recognize(file);return (r&&r.data&&r.data.text)||"";}finally{try{await w.terminate();}catch(_){}}
+  }
+  let rcpUrl=null;
+  const rStatus=(t,err)=>{const s=$("rStatus");s.textContent=t||"";s.hidden=!t;s.classList.toggle("err",!!err);};
+  function rcpOpen(on){$("rBox").hidden=!on;$("rToggle").setAttribute("aria-expanded",String(on));if(!on){rcpReset();}}
+  function rcpReset(){rcpUrl=null;$("rUrl").value="";$("rTxt").value="";$("rFile").value="";$("rPrev").hidden=true;$("rItems").innerHTML="";$("rInput").hidden=false;rStatus("");}
+  function rcpRow(it){const cb=h("input",{type:"checkbox","aria-label":"Mitnehmen"});cb.checked=it.on!==false;
+    const t=h("input",{type:"text",maxlength:"110",value:(it.q?it.q+" ":"")+it.t,"aria-label":"Zutat"});
+    const row=h("div",{class:"rrow"+(cb.checked?"":" off")},[cb,t]);cb.addEventListener("change",()=>row.classList.toggle("off",!cb.checked));
+    if(it.on===false&&PANTRY.test(it.t))row.append(h("span",{class:"small muted",style:"white-space:nowrap",text:"meist da"}));return row;}
+  function rcpShow(name,items){
+    if(!items.length){rStatus("Ich habe keine Zutaten gefunden. Kopier die Zutatenliste und füg sie unten als Text ein.",true);return;}
+    $("rName").value=name||"";const box=$("rItems");box.innerHTML="";items.forEach(it=>box.append(rcpRow(it)));
+    $("rInput").hidden=true;$("rPrev").hidden=false;rStatus("");rcpCount();
+    if(!name)$("rName").focus();}
+  function rcpCount(){const n=[...document.querySelectorAll("#rItems .rrow")].filter(r=>r.querySelector("input[type=checkbox]").checked&&r.querySelector("input[type=text]").value.trim()).length;$("rSave").textContent=n===1?"1 Sache auf die Liste":n+" Sachen auf die Liste";$("rSave").disabled=!n;}
+  $("rItems").addEventListener("input",rcpCount);$("rItems").addEventListener("change",rcpCount);
+  $("rToggle").addEventListener("click",()=>rcpOpen($("rBox").hidden));
+  $("rCancel").addEventListener("click",()=>rcpOpen(false));
+  $("rBack").addEventListener("click",()=>{$("rPrev").hidden=true;$("rInput").hidden=false;});
+  $("rMore").addEventListener("click",()=>{const r=rcpRow({q:"",t:"",on:true});$("rItems").append(r);r.querySelector("input[type=text]").focus();rcpCount();});
+  async function rcpFromUrl(){
+    let u=$("rUrl").value.trim();const m=u.match(/https?:\/\/[^\s"'<>]+/i);if(!m){rStatus("Das ist kein Link. Er fängt mit https:// an.",true);return;}u=m[0];$("rUrl").value=u;
+    if(!navigator.onLine){rStatus("Du bist offline. Rezepte laden geht nur mit Internet.",true);return;}
+    rStatus("Rezept wird geladen …");$("rLoad").disabled=true;
+    try{const r=await importFromUrl(u);rcpUrl=u;rcpShow(r.name,r.items);}
+    catch(_){rStatus("Die Seite ließ sich nicht laden. Probier es gleich nochmal oder kopier die Zutaten und füg sie unten als Text ein.",true);}
+    finally{$("rLoad").disabled=false;}
+  }
+  $("rLoad").addEventListener("click",rcpFromUrl);
+  $("rUrl").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();rcpFromUrl();}});
+  $("rPaste").addEventListener("click",async()=>{let t="";try{t=await navigator.clipboard.readText();}catch(_){rStatus("Einfügen ging nicht. Tipp lange ins Feld und wähl „Einfügen“.",true);return;}
+    t=(t||"").trim();if(!t){rStatus("Die Zwischenablage ist leer.",true);return;}
+    if(/^https?:\/\/\S+$/i.test(t)){$("rUrl").value=t;rcpFromUrl();}else{$("rTxt").value=t;rcpFromText();}});
+  function rcpFromText(){const t=$("rTxt").value.trim();if(!t){rStatus("Füg erst die Zutaten ein.",true);return;}rcpUrl=null;rcpShow("",fromText(t));}
+  $("rTxtGo").addEventListener("click",rcpFromText);
+  $("rFile").addEventListener("change",async()=>{const f=$("rFile").files&&$("rFile").files[0];if(!f)return;
+    if(!navigator.onLine&&!window.Tesseract){rStatus("Für die erste Texterkennung brauchst du Internet.",true);return;}
+    rStatus("Screenshot wird gelesen …");
+    try{const txt=await ocrImage(f,p=>rStatus("Screenshot wird gelesen … "+p+" %"));rcpUrl=null;rcpShow("",fromText(txt));}
+    catch(_){rStatus("Den Screenshot konnte ich nicht lesen. Probier einen schärferen Ausschnitt oder füg die Zutaten als Text ein.",true);}
+    finally{$("rFile").value="";}});
+  $("rSave").addEventListener("click",async()=>{
+    const name=$("rName").value.trim().slice(0,60)||"Rezept";
+    const list=[...document.querySelectorAll("#rItems .rrow")].filter(r=>r.querySelector("input[type=checkbox]").checked).map(r=>splitAmt(r.querySelector("input[type=text]").value.trim().replace(/\s+/g," "))).filter(x=>x.t);
+    if(!list.length)return;
+    const grp=name.toLowerCase()===GEN.toLowerCase()?GEN:name;
+    if(await shopAddItems(list,grp,rcpUrl,false)){rcpOpen(false);}
+  });
   // Sicherungs-Erinnerung
   const META_KEY="melina-dashboard-meta";
   const getMeta=()=>{try{return JSON.parse(localStorage.getItem(META_KEY)||"{}")||{};}catch(_){return {};}};
