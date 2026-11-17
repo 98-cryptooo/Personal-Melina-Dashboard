@@ -541,27 +541,35 @@
   const iKey=(g,t)=>sKey(g)+"|"+sKey(t);
   let sGroup=GEN,sExtraGroups=[];
   const itemLabel=i=>(i.q?i.q+" ":"")+i.t;
-  async function shopAddItems(list,group,url,countHist,rid){
+  async function shopAddItems(list,group,url,countHist,rid,opts){
+    opts=opts||{};const note=opts.note||"";
     // list: [{t,q?}] , legt fehlende Einträge in einer Gruppe an
     if(!list.length||!needDb())return false;
     const g=group&&group!==GEN?String(group).trim().slice(0,60):null;
     const open=new Set(shop.filter(i=>!i.done).map(i=>iKey(gOf(i),i.t))),added=[];
-    try{for(const it of list){const t=String(it.t||"").trim().slice(0,80);if(!t)continue;const k=iKey(g||GEN,t);if(open.has(k))continue;open.add(k);
+    try{for(const it of list){const t=String(it.t||"").trim().slice(0,80);if(!t)continue;const k=iKey(g||GEN,t);if(open.has(k)){if(g&&rid){const ex=shop.find(i=>!i.done&&iKey(gOf(i),i.t)===k);if(ex&&!ex.r){const upd={r:rid};if(url)upd.u=url;await db.collection("shop").doc(ex._id).update(upd);}}continue;}open.add(k);
       const old=shop.find(i=>i.done&&iKey(gOf(i),i.t)===k);const q=it.q?String(it.q).trim().slice(0,30):"";
-      if(old){const upd={done:false,doneAt:null,at:new Date().toISOString()};if(q)upd.q=q;await db.collection("shop").doc(old._id).update(upd);added.push({id:old._id,reopen:true,t:old.t});}
+      if(old){const upd={done:false,doneAt:null,at:new Date().toISOString()};if(q)upd.q=q;if(g&&rid){upd.r=rid;if(url)upd.u=url;}await db.collection("shop").doc(old._id).update(upd);added.push({id:old._id,reopen:true,t:old.t});}
       else{const doc={t,done:false,at:new Date().toISOString()};if(q)doc.q=q;if(g)doc.g=g;if(g&&url)doc.u=url;if(g&&rid)doc.r=rid;const ref=await db.collection("shop").add(doc);added.push({id:ref.id,t});}}}
-    catch(_){toast("Nicht gespeichert.",false);return false;}
-    if(!added.length){toast("Steht schon drauf.",false);return true;}
+    catch(_){
+      // Teilweise gespeicherte Posten zurücknehmen, damit nichts halb Angelegtes bleibt
+      for(const a of added){try{if(a.reopen)await db.collection("shop").doc(a.id).update({done:true});else await db.collection("shop").doc(a.id).delete();}catch(__){}}
+      toast("Nicht gespeichert.",false);return false;}
+    if(!added.length){toast("Steht schon drauf."+note,false);return true;}
     if(countHist){const hist=Object.assign({},shopHist);added.forEach(a=>{const k=sKey(a.t),o=hist[k]||{t:a.t,n:0};hist[k]={t:o.t,n:o.n+1,last:TODAY};});try{await db.doc("meta/shop").set({items:hist});}catch(_){}}
-    pushUndo(added.length===1?"Dazu: "+added[0].t:added.length+" Sachen dazu",async()=>{for(const a of added){if(a.reopen)await db.collection("shop").doc(a.id).update({done:true});else await db.collection("shop").doc(a.id).delete();}});return true;
+    pushUndo((added.length===1?"Dazu: "+added[0].t:added.length+" Sachen dazu")+(note?"."+note:""),async()=>{for(const a of added){if(a.reopen)await db.collection("shop").doc(a.id).update({done:true});else await db.collection("shop").doc(a.id).delete();}if(opts.onUndo)await opts.onUndo();});return true;
   }
   function shopAdd(raw){
     const parts=String(raw||"").split(/[,;\n]+/).map(x=>x.trim()).filter(Boolean).slice(0,30);
     return shopAddItems(parts.map(t=>({t})),sGroup,null,true);
   }
   async function shopToggle(i){if(!needDb())return;try{await db.collection("shop").doc(i._id).update({done:!i.done,doneAt:i.done?null:new Date().toISOString()});}catch(_){toast("Nicht gespeichert.",false);}}
-  async function shopRemove(items,label){if(!items.length||!needDb())return;const saved=items.map(i=>{const x=Object.assign({},i);delete x._id;return [i._id,x];});
-    try{for(const i of items)await db.collection("shop").doc(i._id).delete();pushUndo(label,async()=>{for(const [id,x] of saved)await db.collection("shop").doc(id).set(x);});}catch(_){toast("Löschen ging nicht.",false);}}
+  async function shopRemove(items,label,rid){if(!items.length||!needDb())return;const saved=items.map(i=>{const x=Object.assign({},i);delete x._id;return [i._id,x];});
+    try{for(const i of items)await db.collection("shop").doc(i._id).delete();
+      // Rezept nur ändern, wenn es lokal existiert (sonst entstünde ein leeres Stub-Dokument) und noch "list" ist; "today" bleibt unangetastet
+      const rec=rid&&recipes.find(r=>r._id===rid),back=!!(rec&&rec.status==="list");
+      if(back)await db.collection("recipes").doc(rid).update({status:"saved"});
+      pushUndo(label,async()=>{for(const [id,x] of saved)await db.collection("shop").doc(id).set(x);if(back&&recipes.some(r=>r._id===rid))await db.collection("recipes").doc(rid).update({status:"list"});});}catch(_){toast("Löschen ging nicht.",false);}}
   function shopClearDone(){const done=shop.filter(i=>i.done);shopRemove(done,done.length+" erledigte gelöscht");}
   function shopRow(i,showGroup){const kids=[h("span",{class:"bx",text:i.done?"✓":""}),h("span",{style:"flex:1;min-width:0;overflow-wrap:anywhere"},[i.q?h("span",{class:"sq",text:i.q+" "}):null,i.t,showGroup&&i.g?h("span",{class:"sg",text:" · "+i.g}):null])];
     const b=h("button",{class:"sitem"+(i.done?" done":""),type:"button","aria-pressed":String(!!i.done)},kids);b.addEventListener("click",()=>shopToggle(i));
@@ -588,7 +596,7 @@
       if(many){const u=(items.find(i=>i.u)||{}).u,acts=h("span",{class:"gacts"});
         if(u&&/^https?:\/\//i.test(u))acts.append(h("a",{class:"gbtn",href:u,target:"_blank",rel:"noopener noreferrer",text:"Rezept"}));
         const sh=h("button",{class:"gbtn",type:"button",text:"Teilen"});sh.addEventListener("click",()=>shareText(groupText(g,items),g));acts.append(sh);
-        if(g!==GEN){const rm=h("button",{class:"gbtn",type:"button","aria-label":"Gruppe "+g+" löschen",text:"✕"});rm.addEventListener("click",async()=>{const rid=(items.find(i=>i.r)||{}).r;await shopRemove(items,"Gruppe gelöscht: "+g);if(rid&&needDb()){try{await db.collection("recipes").doc(rid).update({status:"saved"});}catch(_){}}});acts.append(rm);}
+        if(g!==GEN){const rm=h("button",{class:"gbtn",type:"button","aria-label":"Gruppe "+g+" löschen",text:"✕"});rm.addEventListener("click",()=>shopRemove(items,"Gruppe gelöscht: "+g,(items.find(i=>i.r)||{}).r));acts.append(rm);}
         lo.append(h("div",{class:"shead"},[h("div",{class:"tgroup",style:"margin:0;min-width:0;overflow-wrap:anywhere",text:g+" ("+items.length+")"}),acts]));}
       items.forEach(i=>lo.append(shopRow(i,false)));});
     const openK=new Set(open.map(i=>sKey(i.t))),sug=Object.keys(shopHist).filter(k=>!openK.has(k)).sort((a,b)=>(shopHist[b].n-shopHist[a].n)||((shopHist[b].last||"")>(shopHist[a].last||"")?1:-1)).slice(0,10);
@@ -713,9 +721,21 @@
     if(!list.length)return;
     const grp=name.toLowerCase()===GEN.toLowerCase()?GEN:name;
     // Rezept mit Schritten als eigener Eintrag in "recipes" (geteilt mit dem Cockpit, dort Kochmodus und Sammlung)
-    let rid=null;
-    if(grp!==GEN&&needDb()){try{const m=rcpMeta||{};const ref=await db.collection("recipes").add({name:grp,url:rcpUrl||null,steps:m.steps||[],servings:m.servings||null,yieldText:m.yieldText||"",time:m.time||null,image:m.image||null,ingredients:list.map(x=>({q:x.q||"",t:x.t})),status:"list",at:new Date().toISOString()});rid=ref.id;}catch(_){}}
-    if(await shopAddItems(list,grp,rcpUrl,false,rid)){rcpOpen(false);}
+    const m=rcpMeta||{};let rid=null,fresh=false,stepN=0;
+    if(grp!==GEN){
+      if(!needDb())return;
+      const ex=rcpUrl?recipes.find(r=>r.url===rcpUrl):null;
+      try{
+        if(ex){rid=ex._id;stepN=(ex.steps||[]).length;const upd={};
+          if(!stepN&&(m.steps||[]).length){upd.steps=m.steps;stepN=m.steps.length;}
+          if(ex.status==="saved")upd.status="list";
+          if(Object.keys(upd).length)await db.collection("recipes").doc(rid).update(upd);}
+        else{const ref=await db.collection("recipes").add({name:grp,url:rcpUrl||null,steps:m.steps||[],servings:m.servings||null,yieldText:m.yieldText||"",time:m.time||null,image:m.image||null,ingredients:list.map(x=>({q:x.q||"",t:x.t})),status:"list",at:new Date().toISOString()});rid=ref.id;fresh=true;stepN=(m.steps||[]).length;}
+      }catch(_){toast("Rezept konnte nicht für das Cockpit gespeichert werden.",false);return;}
+    }
+    const delRecipe=async()=>{try{await db.collection("recipes").doc(rid).delete();}catch(_){}};
+    const ok=await shopAddItems(list,grp,rcpUrl,false,rid,{note:grp!==GEN&&!stepN?" Keine Anleitung erkannt.":"",onUndo:fresh?delRecipe:null});
+    if(ok){rcpOpen(false);}else if(fresh){await delRecipe();}
   });
   // Sicherungs-Erinnerung
   const META_KEY="melina-dashboard-meta";
@@ -792,7 +812,7 @@
       };},
       doc(path){const i=path.lastIndexOf("/");return docRef(path.slice(0,i),path.slice(i+1));},
       dump(){return clone(data);},
-      load(obj){data=obj;if(!data.goals)data.goals={main:{items:[]}};persist();Object.keys(col("shop")).forEach(id=>hook("shop",id));emit(null);},
+      load(obj){data=obj;if(!data.goals)data.goals={main:{items:[]}};persist();["shop","recipes"].forEach(c=>Object.keys(col(c)).forEach(id=>hook(c,id)));emit(null);},
       setWriteHook(fn){onWrite=fn;},
       // Änderung vom Server übernehmen, ohne sie wieder als eigene Änderung zu melden
       applyRemote(c,id,v){if(v==null)delete col(c)[id];else col(c)[id]=clone(v);persist();emit(c);},
