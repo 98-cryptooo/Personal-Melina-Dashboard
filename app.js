@@ -752,10 +752,11 @@
     const persist=()=>{if(!ok)throw Object.assign(new Error("blocked"),{code:"blocked"});try{localStorage.setItem(KEY,JSON.stringify(data));}catch(e){throw Object.assign(new Error("save"),{code:e&&e.name==="QuotaExceededError"?"quota_exceeded":"save_failed"});}};
     const emit=coll=>subs.forEach(s=>{if(!coll||s.coll===coll)queueMicrotask(s.fire);});
     const col=c=>data[c]||(data[c]={});
+    let onWrite=null;const hook=(c,id)=>{if(onWrite)try{onWrite(c,id);}catch(_){}};
     function docRef(c,id){return{id,
-      async set(v){col(c)[id]=clone(v);persist();emit(c);},
-      async update(p){col(c)[id]=Object.assign({},col(c)[id]||{},clone(p));persist();emit(c);},
-      async delete(){delete col(c)[id];persist();emit(c);},
+      async set(v){col(c)[id]=clone(v);persist();hook(c,id);emit(c);},
+      async update(p){col(c)[id]=Object.assign({},col(c)[id]||{},clone(p));persist();hook(c,id);emit(c);},
+      async delete(){delete col(c)[id];persist();hook(c,id);emit(c);},
       onSnapshot(cb){const s={coll:c,fire:()=>{const v=col(c)[id];cb({exists:v!=null,data:()=>clone(v)});}};subs.push(s);s.fire();return()=>subs.splice(subs.indexOf(s),1);}
     };}
     return{
@@ -767,7 +768,12 @@
       };},
       doc(path){const i=path.lastIndexOf("/");return docRef(path.slice(0,i),path.slice(i+1));},
       dump(){return clone(data);},
-      load(obj){data=obj;if(!data.goals)data.goals={main:{items:[]}};persist();emit(null);},
+      load(obj){data=obj;if(!data.goals)data.goals={main:{items:[]}};persist();Object.keys(col("shop")).forEach(id=>hook("shop",id));emit(null);},
+      setWriteHook(fn){onWrite=fn;},
+      // Änderung vom Server übernehmen, ohne sie wieder als eigene Änderung zu melden
+      applyRemote(c,id,v){if(v==null)delete col(c)[id];else col(c)[id]=clone(v);persist();emit(c);},
+      peek(c,id){const v=col(c)[id];return v==null?null:clone(v);},
+      ids(c){return Object.keys(col(c));},
       reload(){try{data=JSON.parse(localStorage.getItem(KEY)||"{}")||{};if(!data.goals)data.goals={main:{items:[]}};}catch(_){}emit(null);}
     };
   }
@@ -777,6 +783,47 @@
     try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist().catch(()=>{});}catch(_){}
     if("serviceWorker" in navigator&&location.protocol==="https:")navigator.serviceWorker.register("sw.js").catch(()=>{});
     try{localStorage.setItem(KEY+"-t","1");localStorage.removeItem(KEY+"-t");}catch(_){canWrite=false;$("connNote").textContent="Dieser Browser erlaubt kein Speichern (privater Modus?). Öffne die Datei in einem normalen Fenster.";}
+    // ---------- Gemeinsame Einkaufsliste (Supabase, Projekt Haushalt) ----------
+    // Nur die Sammlung "shop" verlässt das Gerät. Alles andere bleibt in localStorage.
+    // Jeder Eintrag trägt einen Zeitstempel; bei zwei Änderungen am selben Eintrag gewinnt die neuere.
+    (function shopSync(){
+      const SK="melina-shop-sync",LIST="shop";
+      const ld=()=>{try{return JSON.parse(localStorage.getItem(SK))||{};}catch(_){return{};}};
+      let st=Object.assign({cfg:{},ts:{},out:{},cur:""},ld());st.cfg=st.cfg||{};st.ts=st.ts||{};st.out=st.out||{};
+      const sv=()=>{try{localStorage.setItem(SK,JSON.stringify(st));}catch(_){}};
+      const on=()=>!!(st.cfg.url&&st.cfg.key&&st.cfg.code);
+      let busy=false,timer=null,status="off";
+      // Beitritt per Link: #join=CODE&u=URL&k=KEY
+      try{const hs=location.hash;if(hs.includes("join=")){const p=new URLSearchParams(hs.slice(1));st.cfg={code:p.get("join")||"",url:p.get("u")||"",key:p.get("k")||""};st.cur="";markAll();sv();history.replaceState(null,"",location.pathname+location.search);}}catch(_){}
+      function markAll(){db.ids(LIST).forEach(id=>{const t=st.ts[id]||Date.now();st.ts[id]=t;st.out[id]=t;});}
+      db.setWriteHook((c,id)=>{if(c!==LIST)return;const t=Math.max(Date.now(),(st.ts[id]||0)+1);st.ts[id]=t;st.out[id]=t;sv();queue();});
+      function queue(){clearTimeout(timer);timer=setTimeout(run,1200);}
+      async function rpc(fn,body){const r=await fetch(st.cfg.url.replace(/\/$/,"")+"/rest/v1/rpc/"+fn,{method:"POST",headers:{"Content-Type":"application/json",apikey:st.cfg.key,Authorization:"Bearer "+st.cfg.key},body:JSON.stringify(body),credentials:"omit",referrerPolicy:"no-referrer"});if(!r.ok)throw new Error(r.status+" "+(await r.text()).slice(0,200));return r.json();}
+      async function run(){
+        if(!on())return show("off");if(!navigator.onLine)return show("offline");if(busy)return;busy=true;show("busy");
+        try{
+          const ids=Object.keys(st.out);
+          if(ids.length){const sent={};const items=ids.map(id=>{sent[id]=st.out[id];const v=db.peek(LIST,id);return{id,data:v,ts:st.ts[id]||sent[id],deleted:v==null};});
+            for(let i=0;i<items.length;i+=400)await rpc("hh_push",{p_code:st.cfg.code,p_list:LIST,p_items:items.slice(i,i+400)});
+            ids.forEach(id=>{if(st.out[id]===sent[id])delete st.out[id];});sv();}
+          const cur=st.cur||"1970-01-01T00:00:00+00:00";const rows=await rpc("hh_pull",{p_code:st.cfg.code,p_list:LIST,p_since:cur});let max=cur;
+          for(const r of rows){if(Date.parse(r.server_at)>Date.parse(max))max=r.server_at;const t=Number(r.ts);if(st.out[r.id])continue;if(!st.ts[r.id]||t>st.ts[r.id]){st.ts[r.id]=t;db.applyRemote(LIST,r.id,r.deleted?null:r.data);}}
+          st.cur=max;sv();show("ok");
+        }catch(e){console.warn("Einkauf-Sync",e);show(navigator.onLine?"error":"offline");}
+        finally{busy=false;}
+      }
+      function show(s){status=s;const el=$("syncState");if(!el)return;const n=Object.keys(st.out).length;
+        el.textContent={off:"Nur auf diesem Gerät",ok:"Geteilt, aktuell",busy:"Gleicht ab …",offline:n?"Offline, wird später geteilt":"Offline",error:"Teilen klappt gerade nicht"}[s];el.dataset.s=s;
+        const f=$("syncForm");if(f&&!f.dataset.init){f.dataset.init="1";$("syncUrl").value=st.cfg.url||"";$("syncKey").value=st.cfg.key||"";$("syncCode").value=st.cfg.code||"";}
+        if($("syncOff"))$("syncOff").hidden=!on();if($("syncLink"))$("syncLink").hidden=!on();}
+      $("syncSave").addEventListener("click",()=>{const u=$("syncUrl").value.trim(),k=$("syncKey").value.trim(),c=$("syncCode").value.trim();if(!u||!k||!c){toast("Bitte alle drei Felder ausfüllen.",false);return;}if(!/^https:\/\//.test(u)){toast("Die Adresse muss mit https:// beginnen.",false);return;}st.cfg={url:u,key:k,code:c};st.cur="";markAll();sv();toast("Gespeichert, gleiche ab …",false);run();});
+      $("syncOff").addEventListener("click",()=>{if(!confirm("Teilen beenden? Die Liste bleibt auf diesem Gerät."))return;st={cfg:{},ts:st.ts,out:{},cur:""};sv();["syncUrl","syncKey","syncCode"].forEach(i=>$(i).value="");show("off");});
+      $("syncLink").addEventListener("click",async()=>{const l=location.origin+location.pathname+"#join="+encodeURIComponent(st.cfg.code)+"&u="+encodeURIComponent(st.cfg.url)+"&k="+encodeURIComponent(st.cfg.key);try{await navigator.clipboard.writeText(l);toast("Link kopiert. Nur privat weitergeben.",false);}catch(_){prompt("Link fürs zweite Gerät:",l);}});
+      window.addEventListener("online",run);window.addEventListener("offline",()=>show("offline"));
+      document.addEventListener("visibilitychange",()=>{if(!document.hidden)run();});
+      setInterval(()=>{if(!document.hidden&&$("view-einkauf")&&!$("view-einkauf").hidden)run();else if(!document.hidden&&Date.now()%60000<15000)run();},15000);
+      show(on()?"busy":"off");run();
+    })();
     db.collection("timeline").onSnapshot(x=>{timeline=x.docs.map(d=>Object.assign({_id:d.id},d.data())).filter(e=>typeof e.date==="string");renderAll();});
     db.doc("goals/main").onSnapshot(x=>{goals=x.exists?x.data():{items:[]};renderGoals();renderHeute();});
     db.doc("settings/main").onSnapshot(x=>{settings=x.exists?x.data():{symptoms:[]};renderHeute();renderWoche();});
