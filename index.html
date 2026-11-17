@@ -10,7 +10,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Melina">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="theme-color" content="#FFF3F7">
+<meta name="theme-color" content="#F4DCE5">
 <style>
 
 @font-face{font-family:"Manrope";src:url(fonts/manrope.woff2) format("woff2");font-weight:200 800;font-display:swap}
@@ -18,7 +18,7 @@
 /* Melina Dashboard: helles Rosa-Theme. Reiter: Heute, Gedanken, Woche, Ziele, Jahr. Speichert lokal im Browser. */
 :root{
   color-scheme:light;
-  --bg:#FFF3F7; --panel:#FFFFFF; --panel-2:#FFF0F5; --line:#F7DCE7; --line-2:#EFC6D7;
+  --bg:#F4DCE5; --panel:#FFFFFF; --panel-2:#FFF0F5; --line:#F7DCE7; --line-2:#EFC6D7;
   --ink:#3A1E2B; --muted:#76505F; --dim:#76505F;
   --gold:#E4568F; --gold-2:#F590B8; --gold-deep:#B8336A; --steel:#B98ACD; --steel-2:#C9A3DA;
   --ok:#2E7D52; --warn:#D9822B;
@@ -29,7 +29,7 @@
   --r-lg:30px; --r-md:20px;
 }
 *{box-sizing:border-box}
-html{--veil:rgba(255,243,247,.78);background:linear-gradient(var(--veil),var(--veil)),url(leo.svg) 0 0/240px 240px repeat,var(--bg)}body{background:transparent}
+html{--veil:rgba(244,220,229,.80);background:linear-gradient(var(--veil),var(--veil)),url(leo.svg) 0 0/240px 240px repeat,var(--bg)}body{background:transparent}
 body{color:var(--ink);font-family:var(--f);font-size:15px;line-height:1.5}
 body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--bg)}
 .shell{max-width:1240px;margin:0 auto;padding-block:20px 96px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:22px}
@@ -632,7 +632,7 @@ input[type=url]{font:15px var(--f);color:var(--ink);background:var(--panel-2);bo
   <section id="view-einkauf" class="view" hidden>
     <div class="logger">
       <div class="lg-head"><h1 class="lg-q" style="margin:0">Einkaufsliste</h1><button class="gbtn" type="button" id="sShare">Liste teilen</button></div>
-      <details class="syncbox"><summary><span class="small muted">Gemeinsame Liste:</span> <span class="syncstate" id="syncState" data-s="off">Nur auf diesem Gerät</span></summary>
+      <details class="syncbox" id="syncBox"><summary><span class="small muted">Gemeinsame Liste:</span> <span class="syncstate" id="syncState" data-s="off">Nur auf diesem Gerät</span></summary>
         <div class="syncform" id="syncForm">
           <div class="small muted">Nur die Einkaufsliste wird geteilt, mit Rik und dem Wohnungs-Cockpit. Alles andere bleibt auf diesem Gerät.</div>
           <label class="small">Adresse (Project URL)<input type="url" id="syncUrl" placeholder="https://….supabase.co" autocomplete="off" autocapitalize="off"></label>
