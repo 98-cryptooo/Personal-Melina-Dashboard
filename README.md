@@ -6,7 +6,7 @@ Alle anderen Einträge bleiben im Browser des Geräts (localStorage) und landen 
 
 ## Gemeinsame Einkaufsliste
 
-Nur die Einkaufsliste wird geteilt, sonst nichts. Einrichten im Reiter Einkauf unter **Gemeinsame Liste**: Adresse, Schlüssel und Haushaltscode eintragen, **Verbinden**. Danach **Link fürs zweite Gerät** antippen und den Link privat schicken.
+Nur die Einkaufsliste und die daraus angelegten Rezepte werden geteilt, sonst nichts. Rezepte per Link bringen Zutaten, Arbeitsschritte, Portionen und Kochzeit mit; gekocht wird im Wohnungs-Cockpit. Einrichten im Reiter Einkauf unter **Gemeinsame Liste**: Adresse, Schlüssel und Haushaltscode eintragen, **Verbinden**. Danach **Link fürs zweite Gerät** antippen und den Link privat schicken.
 
 - Speicher: Supabase-Projekt Haushalt (Region Frankfurt). Tabellen sind für den öffentlichen Schlüssel gesperrt, Zugriff nur über `hh_pull` und `hh_push` mit Haushaltscode.
 - Abgleich pro Eintrag, die neuere Änderung gewinnt. Offline geht alles weiter und gleicht später ab.
