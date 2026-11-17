@@ -1,6 +1,6 @@
 // Melina Dashboard: Offline-Unterstützung. Netz zuerst, damit Updates sofort ankommen; ohne Netz aus dem Cache.
 // Speichert nur die App-Dateien, niemals Melinas Einträge (die liegen in localStorage).
-const CACHE = "melina-v7";
+const CACHE = "melina-v8";
 const ASSETS = ["./", "index.html", "app.js", "manifest.webmanifest", "icon-180.png", "icon-192.png", "icon-512.png", "leo.svg", "fonts/manrope.woff2", "fonts/fraunces.woff2"];
 
 self.addEventListener("install", e => {

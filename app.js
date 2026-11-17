@@ -477,7 +477,7 @@
   const LVL=["","leicht","mittel","stark"];
   const BODY_BASE=[{k:"kopf",l:"Kopfschmerzen",ic:"head",sev:true},{k:"migraene",l:"Migräne",ic:"bolt",sev:true},{k:"therapie",l:"Therapie",ic:"chat",sev:false},{k:"meds",l:"Schmerzmittel",ic:"pill",sev:false}];
   const ADD_TILE={k:"_add",l:"Eigene",type:"addbody",ic:"plus",c:"--a-body"};
-  let settings={symptoms:[]},shop=[],shopHist={};
+  let settings={symptoms:[]},shop=[],shopHist={},recipes=[];
   function bodyTiles(){return BODY_BASE.map(b=>Object.assign({type:"body",c:"--a-body"},b)).concat((settings.symptoms||[]).map(s=>({k:s.k,l:s.l,ic:"dot",type:"body",sev:true,custom:true,c:"--a-body"})));}
   const LEGACY_BODY={kreislauf:"Kreislauf / Schwindel"};
   const bodyLabel=x=>(bodyTiles().find(b=>b.k===x.k)||{}).l||x.l||LEGACY_BODY[x.k]||x.k;
@@ -541,7 +541,7 @@
   const iKey=(g,t)=>sKey(g)+"|"+sKey(t);
   let sGroup=GEN,sExtraGroups=[];
   const itemLabel=i=>(i.q?i.q+" ":"")+i.t;
-  async function shopAddItems(list,group,url,countHist){
+  async function shopAddItems(list,group,url,countHist,rid){
     // list: [{t,q?}] , legt fehlende Einträge in einer Gruppe an
     if(!list.length||!needDb())return false;
     const g=group&&group!==GEN?String(group).trim().slice(0,60):null;
@@ -549,7 +549,7 @@
     try{for(const it of list){const t=String(it.t||"").trim().slice(0,80);if(!t)continue;const k=iKey(g||GEN,t);if(open.has(k))continue;open.add(k);
       const old=shop.find(i=>i.done&&iKey(gOf(i),i.t)===k);const q=it.q?String(it.q).trim().slice(0,30):"";
       if(old){const upd={done:false,doneAt:null,at:new Date().toISOString()};if(q)upd.q=q;await db.collection("shop").doc(old._id).update(upd);added.push({id:old._id,reopen:true,t:old.t});}
-      else{const doc={t,done:false,at:new Date().toISOString()};if(q)doc.q=q;if(g)doc.g=g;if(g&&url)doc.u=url;const ref=await db.collection("shop").add(doc);added.push({id:ref.id,t});}}}
+      else{const doc={t,done:false,at:new Date().toISOString()};if(q)doc.q=q;if(g)doc.g=g;if(g&&url)doc.u=url;if(g&&rid)doc.r=rid;const ref=await db.collection("shop").add(doc);added.push({id:ref.id,t});}}}
     catch(_){toast("Nicht gespeichert.",false);return false;}
     if(!added.length){toast("Steht schon drauf.",false);return true;}
     if(countHist){const hist=Object.assign({},shopHist);added.forEach(a=>{const k=sKey(a.t),o=hist[k]||{t:a.t,n:0};hist[k]={t:o.t,n:o.n+1,last:TODAY};});try{await db.doc("meta/shop").set({items:hist});}catch(_){}}
@@ -588,7 +588,7 @@
       if(many){const u=(items.find(i=>i.u)||{}).u,acts=h("span",{class:"gacts"});
         if(u&&/^https?:\/\//i.test(u))acts.append(h("a",{class:"gbtn",href:u,target:"_blank",rel:"noopener noreferrer",text:"Rezept"}));
         const sh=h("button",{class:"gbtn",type:"button",text:"Teilen"});sh.addEventListener("click",()=>shareText(groupText(g,items),g));acts.append(sh);
-        if(g!==GEN){const rm=h("button",{class:"gbtn",type:"button","aria-label":"Gruppe "+g+" löschen",text:"✕"});rm.addEventListener("click",()=>shopRemove(items,"Gruppe gelöscht: "+g));acts.append(rm);}
+        if(g!==GEN){const rm=h("button",{class:"gbtn",type:"button","aria-label":"Gruppe "+g+" löschen",text:"✕"});rm.addEventListener("click",async()=>{const rid=(items.find(i=>i.r)||{}).r;await shopRemove(items,"Gruppe gelöscht: "+g);if(rid&&needDb()){try{await db.collection("recipes").doc(rid).update({status:"saved"});}catch(_){}}});acts.append(rm);}
         lo.append(h("div",{class:"shead"},[h("div",{class:"tgroup",style:"margin:0;min-width:0;overflow-wrap:anywhere",text:g+" ("+items.length+")"}),acts]));}
       items.forEach(i=>lo.append(shopRow(i,false)));});
     const openK=new Set(open.map(i=>sKey(i.t))),sug=Object.keys(shopHist).filter(k=>!openK.has(k)).sort((a,b)=>(shopHist[b].n-shopHist[a].n)||((shopHist[b].last||"")>(shopHist[a].last||"")?1:-1)).slice(0,10);
@@ -626,15 +626,36 @@
     const blocks=[...String(html).matchAll(/<script[^>]*application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)].map(m=>m[1]);
     const walk=o=>{if(!o||typeof o!=="object")return null;if(Array.isArray(o)){for(const x of o){const r=walk(x);if(r)return r;}return null;}
       if([].concat(o["@type"]).some(t=>String(t).toLowerCase()==="recipe")&&Array.isArray(o.recipeIngredient))return o;return walk(o["@graph"]);};
-    for(const b of blocks){try{const r=walk(JSON.parse(b.trim()));if(r){const its=toItems(r.recipeIngredient);if(its.length)return {name:cleanLine(r.name||""),items:its};}}catch(_){}}
+    for(const b of blocks){try{const r=walk(JSON.parse(b.trim()));if(r){const its=toItems(r.recipeIngredient);if(its.length)return {name:cleanLine(r.name||""),items:its,steps:ldSteps(r.recipeInstructions),servings:yieldNum(r.recipeYield),yieldText:yieldTxt(r.recipeYield),time:isoMin(r.totalTime)||(isoMin(r.prepTime)+isoMin(r.cookTime))||null,image:ldImage(r.image)};}}catch(_){}}
     return null;
   }
+  // Arbeitsschritte aus JSON-LD: Text, Liste von Texten, HowToStep oder HowToSection
+  function ldSteps(x){const out=[];const add=t=>{const c=cleanLine(t);if(c.length>3)out.push(c.slice(0,600));};
+    const walk=o=>{if(!o)return;if(typeof o==="string"){o.split(/\r?\n+/).forEach(add);return;}if(Array.isArray(o)){o.forEach(walk);return;}
+      if(o.itemListElement){walk(o.itemListElement);return;}if(o.text)add(o.text);else if(o.name)add(o.name);};
+    walk(x);return out.slice(0,40);}
+  function yieldNum(y){const s=[].concat(y||[]).map(String).join(" ");const m=s.match(/\d+/);return m?Math.min(+m[0],50):null;}
+  function yieldTxt(y){const s=cleanLine([].concat(y||[]).map(String).sort((a,b)=>b.length-a.length)[0]||"");return s.slice(0,60);}
+  function isoMin(t){const m=String(t||"").match(/P(?:(\d+)D)?T?(?:(\d+)H)?(?:(\d+)M)?/);if(!m)return 0;return (+m[1]||0)*1440+(+m[2]||0)*60+(+m[3]||0);}
+  function ldImage(i){const v=[].concat(i||[])[0];return typeof v==="string"?v:(v&&v.url)||null;}
+  // Arbeitsschritte aus Seitentext (Markdown), falls die Seite kein JSON-LD hat
+  function stepsFromText(txt){
+    const lines=String(txt||"").split(/\r?\n/);let start=-1;
+    for(let i=0;i<lines.length;i++){const c=cleanLine(lines[i]);if(/^(zubereitung|anleitung|so geht'?s|so wird'?s gemacht|und so geht'?s)\b/i.test(c)&&c.length<40){start=i;break;}}
+    if(start<0)return [];const out=[];
+    for(let j=start+1;j<lines.length&&out.length<40;j++){const raw=lines[j].trim();if(!raw)continue;const c=cleanLine(raw);
+      if(/^#/.test(raw)&&out.length)break;if(/^(nährwerte|tipps?|notizen|kommentare|das könnte|weitere rezepte|teilen|bewertung)\b/i.test(c)&&out.length)break;
+      if(c.length<20||/^(zubereitung|schritt \d+)$/i.test(c))continue;out.push(c.slice(0,600));}
+    return out;}
+  function yieldFromText(txt){const m=String(txt||"").match(/(?:zutaten\s+)?für\s+(\d{1,2})\s+(portionen?|personen?|gläser|glas|stück|stücke|muffins|kekse)/i);return m?{n:+m[1],t:m[1]+" "+m[2]}:null;}
   async function fetchWithTimeout(url,opts,ms){const c=new AbortController(),t=setTimeout(()=>c.abort(),ms);try{const r=await fetch(url,Object.assign({signal:c.signal,referrerPolicy:"no-referrer",credentials:"omit"},opts||{}));if(!r.ok)throw new Error("http "+r.status);return await r.text();}finally{clearTimeout(t);}}
   async function importFromUrl(url){
     const proxy="https://r.jina.ai/"+url;
-    try{const html=await fetchWithTimeout(proxy,{headers:{"X-Return-Format":"html"}},15000);const r=fromLdJson(html);if(r)return r;}catch(_){}
+    let ld=null;try{const html=await fetchWithTimeout(proxy,{headers:{"X-Return-Format":"html"}},15000);ld=fromLdJson(html);if(ld&&ld.steps.length)return ld;}catch(_){}
+    if(ld){try{const md0=await fetchWithTimeout(proxy,null,20000);ld.steps=stepsFromText(md0.split(/^Markdown Content:\s*$/m).pop());}catch(_){}return ld;}
     const md=await fetchWithTimeout(proxy,null,20000);const tm=md.match(/^Title:\s*(.+)$/m);
-    const body=md.split(/^Markdown Content:\s*$/m).pop();return {name:tm?cleanLine(tm[1]).replace(/\s+[|–-]\s+[^|–-]*$/,""):"",items:fromText(body)};
+    const body=md.split(/^Markdown Content:\s*$/m).pop();const y=yieldFromText(body);
+    return {name:tm?cleanLine(tm[1]).replace(/\s+[|–-]\s+[^|–-]*$/,""):"",items:fromText(body),steps:stepsFromText(body),servings:y?y.n:null,yieldText:y?y.t:"",time:null,image:null};
   }
   let tessLoad=null;
   function loadTesseract(){if(window.Tesseract)return Promise.resolve();if(tessLoad)return tessLoad;
@@ -646,10 +667,10 @@
       logger:m=>{if(m&&m.status==="recognizing text"&&typeof m.progress==="number")onProg(Math.round(m.progress*100));}});
     try{const r=await w.recognize(file);return (r&&r.data&&r.data.text)||"";}finally{try{await w.terminate();}catch(_){}}
   }
-  let rcpUrl=null;
+  let rcpUrl=null,rcpMeta=null;
   const rStatus=(t,err)=>{const s=$("rStatus");s.textContent=t||"";s.hidden=!t;s.classList.toggle("err",!!err);};
   function rcpOpen(on){$("rBox").hidden=!on;$("rToggle").setAttribute("aria-expanded",String(on));if(!on){rcpReset();}}
-  function rcpReset(){rcpUrl=null;$("rUrl").value="";$("rTxt").value="";$("rFile").value="";$("rPrev").hidden=true;$("rItems").innerHTML="";$("rInput").hidden=false;rStatus("");}
+  function rcpReset(){rcpUrl=null;rcpMeta=null;$("rUrl").value="";$("rTxt").value="";$("rFile").value="";$("rPrev").hidden=true;$("rItems").innerHTML="";$("rInput").hidden=false;rStatus("");}
   function rcpRow(it){const cb=h("input",{type:"checkbox","aria-label":"Mitnehmen"});cb.checked=it.on!==false;
     const t=h("input",{type:"text",maxlength:"110",value:(it.q?it.q+" ":"")+it.t,"aria-label":"Zutat"});
     const row=h("div",{class:"rrow"+(cb.checked?"":" off")},[cb,t]);cb.addEventListener("change",()=>row.classList.toggle("off",!cb.checked));
@@ -669,7 +690,7 @@
     let u=$("rUrl").value.trim();const m=u.match(/https?:\/\/[^\s"'<>]+/i);if(!m){rStatus("Das ist kein Link. Er fängt mit https:// an.",true);return;}u=m[0];$("rUrl").value=u;
     if(!navigator.onLine){rStatus("Du bist offline. Rezepte laden geht nur mit Internet.",true);return;}
     rStatus("Rezept wird geladen …");$("rLoad").disabled=true;
-    try{const r=await importFromUrl(u);rcpUrl=u;rcpShow(r.name,r.items);}
+    try{const r=await importFromUrl(u);rcpUrl=u;rcpMeta={steps:r.steps||[],servings:r.servings||null,yieldText:r.yieldText||"",time:r.time||null,image:r.image||null};rcpShow(r.name,r.items);}
     catch(_){rStatus("Die Seite ließ sich nicht laden. Probier es gleich nochmal oder kopier die Zutaten und füg sie unten als Text ein.",true);}
     finally{$("rLoad").disabled=false;}
   }
@@ -678,12 +699,12 @@
   $("rPaste").addEventListener("click",async()=>{let t="";try{t=await navigator.clipboard.readText();}catch(_){rStatus("Einfügen ging nicht. Tipp lange ins Feld und wähl „Einfügen“.",true);return;}
     t=(t||"").trim();if(!t){rStatus("Die Zwischenablage ist leer.",true);return;}
     if(/^https?:\/\/\S+$/i.test(t)){$("rUrl").value=t;rcpFromUrl();}else{$("rTxt").value=t;rcpFromText();}});
-  function rcpFromText(){const t=$("rTxt").value.trim();if(!t){rStatus("Füg erst die Zutaten ein.",true);return;}rcpUrl=null;rcpShow("",fromText(t));}
+  function rcpFromText(){const t=$("rTxt").value.trim();if(!t){rStatus("Füg erst die Zutaten ein.",true);return;}rcpUrl=null;const y=yieldFromText(t);rcpMeta={steps:stepsFromText(t),servings:y?y.n:null,yieldText:y?y.t:"",time:null,image:null};rcpShow("",fromText(t));}
   $("rTxtGo").addEventListener("click",rcpFromText);
   $("rFile").addEventListener("change",async()=>{const f=$("rFile").files&&$("rFile").files[0];if(!f)return;
     if(!navigator.onLine&&!window.Tesseract){rStatus("Für die erste Texterkennung brauchst du Internet.",true);return;}
     rStatus("Screenshot wird gelesen …");
-    try{const txt=await ocrImage(f,p=>rStatus("Screenshot wird gelesen … "+p+" %"));rcpUrl=null;rcpShow("",fromText(txt));}
+    try{const txt=await ocrImage(f,p=>rStatus("Screenshot wird gelesen … "+p+" %"));rcpUrl=null;rcpMeta={steps:stepsFromText(txt),servings:null,yieldText:"",time:null,image:null};rcpShow("",fromText(txt));}
     catch(_){rStatus("Den Screenshot konnte ich nicht lesen. Probier einen schärferen Ausschnitt oder füg die Zutaten als Text ein.",true);}
     finally{$("rFile").value="";}});
   $("rSave").addEventListener("click",async()=>{
@@ -691,7 +712,10 @@
     const list=[...document.querySelectorAll("#rItems .rrow")].filter(r=>r.querySelector("input[type=checkbox]").checked).map(r=>splitAmt(r.querySelector("input[type=text]").value.trim().replace(/\s+/g," "))).filter(x=>x.t);
     if(!list.length)return;
     const grp=name.toLowerCase()===GEN.toLowerCase()?GEN:name;
-    if(await shopAddItems(list,grp,rcpUrl,false)){rcpOpen(false);}
+    // Rezept mit Schritten als eigener Eintrag in "recipes" (geteilt mit dem Cockpit, dort Kochmodus und Sammlung)
+    let rid=null;
+    if(grp!==GEN&&needDb()){try{const m=rcpMeta||{};const ref=await db.collection("recipes").add({name:grp,url:rcpUrl||null,steps:m.steps||[],servings:m.servings||null,yieldText:m.yieldText||"",time:m.time||null,image:m.image||null,ingredients:list.map(x=>({q:x.q||"",t:x.t})),status:"list",at:new Date().toISOString()});rid=ref.id;}catch(_){}}
+    if(await shopAddItems(list,grp,rcpUrl,false,rid)){rcpOpen(false);}
   });
   // Sicherungs-Erinnerung
   const META_KEY="melina-dashboard-meta";
@@ -787,28 +811,33 @@
     // Nur die Sammlung "shop" verlässt das Gerät. Alles andere bleibt in localStorage.
     // Jeder Eintrag trägt einen Zeitstempel; bei zwei Änderungen am selben Eintrag gewinnt die neuere.
     (function shopSync(){
-      const SK="melina-shop-sync",LIST="shop";
+      const SK="melina-shop-sync",LISTS=["shop","recipes"];
       const ld=()=>{try{return JSON.parse(localStorage.getItem(SK))||{};}catch(_){return{};}};
       let st=Object.assign({cfg:{},ts:{},out:{},cur:""},ld());st.cfg=st.cfg||{};st.ts=st.ts||{};st.out=st.out||{};
+      // Altes Format (nur shop, Schlüssel ohne Liste) übernehmen
+      const up=o=>{const n={};Object.keys(o).forEach(k=>n[k.includes("|")?k:"shop|"+k]=o[k]);return n;};st.ts=up(st.ts);st.out=up(st.out);
+      if(typeof st.cur==="string"){st.cur={shop:st.cur};}st.cur=st.cur||{};
       const sv=()=>{try{localStorage.setItem(SK,JSON.stringify(st));}catch(_){}};
       const on=()=>!!(st.cfg.url&&st.cfg.key&&st.cfg.code);
       let busy=false,timer=null,status="off";
       // Beitritt per Link: #join=CODE&u=URL&k=KEY
-      try{const hs=location.hash;if(hs.includes("join=")){const p=new URLSearchParams(hs.slice(1));st.cfg={code:p.get("join")||"",url:p.get("u")||"",key:p.get("k")||""};st.cur="";markAll();sv();history.replaceState(null,"",location.pathname+location.search);}}catch(_){}
-      function markAll(){db.ids(LIST).forEach(id=>{const t=st.ts[id]||Date.now();st.ts[id]=t;st.out[id]=t;});}
-      db.setWriteHook((c,id)=>{if(c!==LIST)return;const t=Math.max(Date.now(),(st.ts[id]||0)+1);st.ts[id]=t;st.out[id]=t;sv();queue();});
+      try{const hs=location.hash;if(hs.includes("join=")){const p=new URLSearchParams(hs.slice(1));st.cfg={code:p.get("join")||"",url:p.get("u")||"",key:p.get("k")||""};st.cur={};markAll();sv();history.replaceState(null,"",location.pathname+location.search);}}catch(_){}
+      function markAll(){LISTS.forEach(L=>db.ids(L).forEach(id=>{const k=L+"|"+id,t=st.ts[k]||Date.now();st.ts[k]=t;st.out[k]=t;}));}
+      db.setWriteHook((c,id)=>{if(!LISTS.includes(c))return;const k=c+"|"+id,t=Math.max(Date.now(),(st.ts[k]||0)+1);st.ts[k]=t;st.out[k]=t;sv();queue();});
       function queue(){clearTimeout(timer);timer=setTimeout(run,1200);}
       async function rpc(fn,body){const r=await fetch(st.cfg.url.replace(/\/$/,"")+"/rest/v1/rpc/"+fn,{method:"POST",headers:{"Content-Type":"application/json",apikey:st.cfg.key,Authorization:"Bearer "+st.cfg.key},body:JSON.stringify(body),credentials:"omit",referrerPolicy:"no-referrer"});if(!r.ok)throw new Error(r.status+" "+(await r.text()).slice(0,200));return r.json();}
       async function run(){
         if(!on())return show("off");if(!navigator.onLine)return show("offline");if(busy)return;busy=true;show("busy");
         try{
-          const ids=Object.keys(st.out);
-          if(ids.length){const sent={};const items=ids.map(id=>{sent[id]=st.out[id];const v=db.peek(LIST,id);return{id,data:v,ts:st.ts[id]||sent[id],deleted:v==null};});
-            for(let i=0;i<items.length;i+=400)await rpc("hh_push",{p_code:st.cfg.code,p_list:LIST,p_items:items.slice(i,i+400)});
-            ids.forEach(id=>{if(st.out[id]===sent[id])delete st.out[id];});sv();}
-          const cur=st.cur||"1970-01-01T00:00:00+00:00";const rows=await rpc("hh_pull",{p_code:st.cfg.code,p_list:LIST,p_since:cur});let max=cur;
-          for(const r of rows){if(Date.parse(r.server_at)>Date.parse(max))max=r.server_at;const t=Number(r.ts);if(st.out[r.id])continue;if(!st.ts[r.id]||t>st.ts[r.id]){st.ts[r.id]=t;db.applyRemote(LIST,r.id,r.deleted?null:r.data);}}
-          st.cur=max;sv();show("ok");
+          for(const L of LISTS){
+            const keys=Object.keys(st.out).filter(k=>k.startsWith(L+"|"));
+            if(keys.length){const sent={};const items=keys.map(k=>{const id=k.slice(L.length+1);sent[k]=st.out[k];const v=db.peek(L,id);return{id,data:v,ts:st.ts[k]||sent[k],deleted:v==null};});
+              for(let i=0;i<items.length;i+=400)await rpc("hh_push",{p_code:st.cfg.code,p_list:L,p_items:items.slice(i,i+400)});
+              keys.forEach(k=>{if(st.out[k]===sent[k])delete st.out[k];});sv();}
+            const cur=st.cur[L]||"1970-01-01T00:00:00+00:00";const rows=await rpc("hh_pull",{p_code:st.cfg.code,p_list:L,p_since:cur});let max=cur;
+            for(const r of rows){if(Date.parse(r.server_at)>Date.parse(max))max=r.server_at;const k=L+"|"+r.id,t=Number(r.ts);if(st.out[k])continue;if(!st.ts[k]||t>st.ts[k]){st.ts[k]=t;db.applyRemote(L,r.id,r.deleted?null:r.data);}}
+            st.cur[L]=max;sv();}
+          show("ok");
         }catch(e){console.warn("Einkauf-Sync",e);show(navigator.onLine?"error":"offline");}
         finally{busy=false;}
       }
@@ -816,8 +845,8 @@
         el.textContent={off:"Nur auf diesem Gerät",ok:"Geteilt, aktuell",busy:"Gleicht ab …",offline:n?"Offline, wird später geteilt":"Offline",error:"Teilen klappt gerade nicht"}[s];el.dataset.s=s;
         const f=$("syncForm");if(f&&!f.dataset.init){f.dataset.init="1";$("syncUrl").value=st.cfg.url||"";$("syncKey").value=st.cfg.key||"";$("syncCode").value=st.cfg.code||"";}
         if($("syncOff"))$("syncOff").hidden=!on();if($("syncLink"))$("syncLink").hidden=!on();}
-      $("syncSave").addEventListener("click",()=>{const u=$("syncUrl").value.trim(),k=$("syncKey").value.trim(),c=$("syncCode").value.trim();if(!u||!k||!c){toast("Bitte alle drei Felder ausfüllen.",false);return;}if(!/^https:\/\//.test(u)){toast("Die Adresse muss mit https:// beginnen.",false);return;}st.cfg={url:u,key:k,code:c};st.cur="";markAll();sv();toast("Gespeichert, gleiche ab …",false);run();});
-      $("syncOff").addEventListener("click",()=>{if(!confirm("Teilen beenden? Die Liste bleibt auf diesem Gerät."))return;st={cfg:{},ts:st.ts,out:{},cur:""};sv();["syncUrl","syncKey","syncCode"].forEach(i=>$(i).value="");show("off");});
+      $("syncSave").addEventListener("click",()=>{const u=$("syncUrl").value.trim(),k=$("syncKey").value.trim(),c=$("syncCode").value.trim();if(!u||!k||!c){toast("Bitte alle drei Felder ausfüllen.",false);return;}if(!/^https:\/\//.test(u)){toast("Die Adresse muss mit https:// beginnen.",false);return;}st.cfg={url:u,key:k,code:c};st.cur={};markAll();sv();toast("Gespeichert, gleiche ab …",false);run();});
+      $("syncOff").addEventListener("click",()=>{if(!confirm("Teilen beenden? Die Liste bleibt auf diesem Gerät."))return;st={cfg:{},ts:st.ts,out:{},cur:{}};sv();["syncUrl","syncKey","syncCode"].forEach(i=>$(i).value="");show("off");});
       $("syncLink").addEventListener("click",async()=>{const l=location.origin+location.pathname+"#join="+encodeURIComponent(st.cfg.code)+"&u="+encodeURIComponent(st.cfg.url)+"&k="+encodeURIComponent(st.cfg.key);try{await navigator.clipboard.writeText(l);toast("Link kopiert. Nur privat weitergeben.",false);}catch(_){prompt("Link fürs zweite Gerät:",l);}});
       window.addEventListener("online",run);window.addEventListener("offline",()=>show("offline"));
       document.addEventListener("visibilitychange",()=>{if(!document.hidden)run();});
@@ -827,6 +856,7 @@
     db.collection("timeline").onSnapshot(x=>{timeline=x.docs.map(d=>Object.assign({_id:d.id},d.data())).filter(e=>typeof e.date==="string");renderAll();});
     db.doc("goals/main").onSnapshot(x=>{goals=x.exists?x.data():{items:[]};renderGoals();renderHeute();});
     db.doc("settings/main").onSnapshot(x=>{settings=x.exists?x.data():{symptoms:[]};renderHeute();renderWoche();});
+    db.collection("recipes").onSnapshot(x=>{recipes=x.docs.map(d=>Object.assign({_id:d.id},d.data()));});
     db.collection("shop").onSnapshot(x=>{shop=x.docs.map(d=>Object.assign({_id:d.id},d.data())).filter(i=>typeof i.t==="string");renderEinkauf();});
     db.doc("meta/shop").onSnapshot(x=>{shopHist=(x.exists&&x.data().items)||{};renderEinkauf();});
     db.collection("data/users/"+uid).onSnapshot(x=>{mine={};x.docs.forEach(d=>mine[d.id]=d.data());renderHeute();renderGedanken();renderWoche();});
