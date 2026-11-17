@@ -844,7 +844,7 @@
       function show(s){status=s;const el=$("syncState");if(!el)return;const n=Object.keys(st.out).length;
         el.textContent={off:"Nur auf diesem Gerät",ok:"Geteilt, aktuell",busy:"Gleicht ab …",offline:n?"Offline, wird später geteilt":"Offline",error:"Teilen klappt gerade nicht"}[s];el.dataset.s=s;
         const f=$("syncForm");if(f&&!f.dataset.init){f.dataset.init="1";$("syncUrl").value=st.cfg.url||"";$("syncKey").value=st.cfg.key||"";$("syncCode").value=st.cfg.code||"";}
-        if($("syncOff"))$("syncOff").hidden=!on();if($("syncLink"))$("syncLink").hidden=!on();}
+        const bx=$("syncBox");if(bx)bx.hidden=on()&&s!=="error"&&location.hash!=="#sync";if($("syncOff"))$("syncOff").hidden=!on();if($("syncLink"))$("syncLink").hidden=!on();}
       $("syncSave").addEventListener("click",()=>{const u=$("syncUrl").value.trim(),k=$("syncKey").value.trim(),c=$("syncCode").value.trim();if(!u||!k||!c){toast("Bitte alle drei Felder ausfüllen.",false);return;}if(!/^https:\/\//.test(u)){toast("Die Adresse muss mit https:// beginnen.",false);return;}st.cfg={url:u,key:k,code:c};st.cur={};markAll();sv();toast("Gespeichert, gleiche ab …",false);run();});
       $("syncOff").addEventListener("click",()=>{if(!confirm("Teilen beenden? Die Liste bleibt auf diesem Gerät."))return;st={cfg:{},ts:st.ts,out:{},cur:{}};sv();["syncUrl","syncKey","syncCode"].forEach(i=>$(i).value="");show("off");});
       $("syncLink").addEventListener("click",async()=>{const l=location.origin+location.pathname+"#join="+encodeURIComponent(st.cfg.code)+"&u="+encodeURIComponent(st.cfg.url)+"&k="+encodeURIComponent(st.cfg.key);try{await navigator.clipboard.writeText(l);toast("Link kopiert. Nur privat weitergeben.",false);}catch(_){prompt("Link fürs zweite Gerät:",l);}});
